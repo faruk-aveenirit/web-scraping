@@ -1,0 +1,19 @@
+{
+  "name": "react-scraper",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "fs": "^0.0.1-security",
+    "knex": "^3.1.0",
+    "mysql": "^2.18.1",
+    "puppeteer": "^19.4.1",
+    "request": "^2.88.2"
+  }
+}
