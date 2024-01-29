@@ -1,68 +1,107 @@
-const puppeteer = require("puppeteer");
+const axios = require('axios');
+const cheerio = require('cheerio');
+const puppeteer = require('puppeteer');
+const fs = require('fs');
+const path = require('path');
 
-const knex = require('knex')({
-  client: 'mysql',
-  connection: {
-    host: '127.0.0.1',
-    port: 3306,
-    user: 'root',
-    password: '',
-    database: 'bangkok_hospital'
-  }
-});
+// URL of the website to scrape
+const url = 'https://www.bangkokhospital.com/en/doctor?page=3';
 
-const downloadImage = require('./imageDownloader');
+async function scrapeWithPuppeteer(url) {
+  const browser = await puppeteer.launch();
+  const page = await browser.newPage();
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
 
-// const imageUrl = 'https://example.com/image.jpg';
-const destination = './doctors';
+  // Wait for all background images to be loaded
+  await page.waitForSelector('.card-wrapper', { visible: true });
 
-downloadImage('https://epms.bdms.co.th/media/images/photos/BHQ/25660105_044645.JPG',)
-const Doctor = () => knex('doctors')
+  // Scroll to load more images
+  await autoScroll(page);
+  // Introduce a 5-second delay
+  await page.waitForTimeout(20000);
+  // await page.waitForFunction(() => {
+  //   const images = document.querySelectorAll('.card-wrapper .-image-size');
+  //   return Array.from(images).every(img => img.complete);
+  // });
+  // Extract background images using Puppeteer
+  const backgroundImageUrls = await page.evaluate(() => {
+    const doctorCards = document.querySelectorAll('.card-wrapper');
+    const backgroundImages = [];
 
-const Specialty = () => knex('doctors')
-const timestamp = Date.now();
-// starting Puppeteer
-puppeteer
-  .launch()
-  .then(async (browser) => {
-    const page = await browser.newPage();
-    await page.goto("https://www.bangkokhospital.com/en/doctor");
-    //Wait for the page to be loaded
-    await page.waitForSelector(".card-wrapper");
-
-    let allFruits = await page.evaluate(() => {
-      const fruitsList = document.body.querySelectorAll(".card-wrapper");
-
-      let fruits = [];
-
-      fruitsList.forEach(async (value) => {
-        // const checkSpec = await knex('specialties').select('id').where({ name: 'Tim' });
-        // console.log(checkSpec);
-        const title = value.querySelector('h6');
-        const specialty = value.querySelector('p');
-        const subSpecialty = value.querySelector('.-sub-specialty');
-        const sub_specialty = subSpecialty ? subSpecialty.innerText : "";
-        const img = value.querySelector('.-image-size');
-        const style = img.currentStyle || window.getComputedStyle(img, false),
-          bi = style.backgroundImage.slice(4, -1).replace(/"/g, "");
-          downloadImage(img.getAttribute('data-src'), destination);
-        fruits.push({
-          title: title.innerText,
-          specialty: specialty.innerText,
-          subSpecialty: sub_specialty,
-          img: img.getAttribute('data-src'),
-          created_at: timestamp,
-          updated_at: timestamp,
-        });
-      });
-      return fruits;
+    doctorCards.forEach(card => {
+      const title = card.querySelector('h6');
+      const specialty = card.querySelector('p');
+      const subSpecialty = card.querySelector('.-sub-specialty');
+      const sub_specialty = subSpecialty ? subSpecialty.innerText : "";
+      const img = card.querySelector('.-image-size');
+      const style = img.currentStyle || window.getComputedStyle(img, false),
+        bi = style.backgroundImage.slice(4, -1).replace(/"/g, "");
+      const backgroundImage = window.getComputedStyle(img).getPropertyValue('background-image');
+      backgroundImages.push(bi);
     });
-
-    const insertedRows = await knex('doctors').insert(fruits);
-
-    // closing the browser
-    await browser.close();
-  })
-  .catch(function (err) {
-    console.error(err);
+    return backgroundImages;
   });
+
+  await browser.close();
+  return backgroundImageUrls;
+}
+
+// Function to download an image
+async function downloadImage(url, destination) {
+  const response = await axios.get(url, { responseType: 'arraybuffer' });
+  fs.writeFileSync(destination, response.data);
+  console.log(`Image downloaded to: ${destination}`);
+}
+
+// Make a GET request to the website to get the doctor list
+axios.get(url)
+  .then(async response => {
+    const html = response.data;
+    const $ = cheerio.load(html);
+
+    // Select the elements containing doctor cards
+    const doctorCards = $('.doctor-card');
+
+    // Create a directory to store downloaded images
+    const downloadDir = path.join(__dirname, 'downloaded_images');
+    if (!fs.existsSync(downloadDir)) {
+      fs.mkdirSync(downloadDir);
+    }
+
+    // Iterate over the doctor cards, extract background image URLs, and download them
+    const backgroundImageUrls = await scrapeWithPuppeteer(url);
+    backgroundImageUrls.forEach(async (backgroundImage, index) => {
+      // Extract the URL from the style attribute
+      // const imageUrl = backgroundImage.match(/url\("(.+)"\)/)[1];
+      const destination = path.join(downloadDir, `doctor_${index + 1}.jpg`);
+
+      // Download the image
+      await downloadImage(backgroundImage, destination);
+    });
+  })
+  .catch(error => {
+    console.error(`Error fetching the page: ${error.message}`);
+  });
+
+  async function autoScroll(page) {
+    await page.evaluate(async () => {
+      await new Promise((resolve, reject) => {
+        let totalHeight = 0;
+        const distance = 100;
+        const maxScrollAttempts = 10;
+        let scrollAttempts = 0;
+  
+        const scrollInterval = setInterval(() => {
+          const scrollHeight = document.body.scrollHeight;
+          window.scrollBy(0, distance);
+          totalHeight += distance;
+  
+          if (totalHeight >= scrollHeight || scrollAttempts >= maxScrollAttempts) {
+            clearInterval(scrollInterval);
+            resolve();
+          }
+          scrollAttempts++;
+        }, 1000); // Adjust the interval as needed
+      });
+    });
+  }
